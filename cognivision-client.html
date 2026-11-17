@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cognivision — Gateway Client</title>
+<script src="https://cdn.jsdelivr.net/npm/protobufjs@7.2.5/dist/protobuf.min.js"></script>
+<style>
+  :root {
+    --bg:#12130f; --panel:#1a1c16; --line:#33362b; --text:#e9e8de;
+    --muted:#8d9080; --accent:#9fc131; --danger:#d6644b;
+    --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+    --sans:"IBM Plex Sans",system-ui,sans-serif;
+  }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--text); font-family:var(--sans); }
+  .app { display:grid; grid-template-columns:minmax(0,1.5fr) minmax(300px,1fr); gap:20px; height:100%; padding:20px; max-width:1200px; margin:0 auto; }
+  @media (max-width:860px){ .app{ grid-template-columns:1fr; height:auto; } .log{ max-height:60vh; } }
+
+  header { display:flex; align-items:center; gap:10px; margin-bottom:12px; font-family:var(--mono); font-size:13px; }
+  header h1 { font-size:14px; font-weight:500; margin:0; color:var(--muted); flex:1; }
+  header h1 span { color:var(--accent); }
+  .pill { display:flex; align-items:center; gap:6px; font-size:11px; color:var(--muted); }
+  .dot { width:8px; height:8px; border-radius:50%; background:var(--danger); }
+  .pill.on .dot { background:var(--accent); box-shadow:0 0 8px var(--accent); }
+  .icon-btn { background:none; border:1px solid var(--line); color:var(--muted); border-radius:6px; padding:5px 9px; cursor:pointer; font-size:12px; }
+  .icon-btn.active { color:var(--accent); border-color:var(--accent); }
+
+  .cam { display:flex; flex-direction:column; min-height:0; }
+  .stage { position:relative; width:100%; aspect-ratio:4/3; background:#0a0b08; border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+  .stage video, .snap { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+  .snap { opacity:0; pointer-events:none; }
+  .snap.on { opacity:1; animation:pulse 1.4s ease-in-out infinite; }
+  .snap.out { transition:opacity .6s ease; }
+  .snap.out.show { opacity:1; }
+  @keyframes pulse { 0%,100%{ filter:brightness(.3) saturate(.6); } 50%{ filter:brightness(1.35) saturate(1.15); } }
+  .flash { position:absolute; inset:0; background:#fff; opacity:0; pointer-events:none; }
+  .flash.go { animation:flash .35s ease-out; }
+  @keyframes flash { from{ opacity:.7; } to{ opacity:0; } }
+  .cam-msg { position:absolute; inset:0; display:none; align-items:center; justify-content:center; text-align:center; padding:24px; color:var(--muted); font-size:13px; cursor:pointer; }
+  .cam-msg.show { display:flex; }
+
+  .composer { display:flex; gap:8px; margin-top:12px; }
+  .composer input { flex:1; min-width:0; background:var(--panel); border:1px solid var(--line); color:var(--text); padding:12px 14px; border-radius:8px; font-size:14px; font-family:var(--sans); }
+  .composer input:focus { outline:none; border-color:var(--accent); }
+  .composer button { background:var(--accent); color:#14170c; border:none; border-radius:8px; padding:0 22px; font-weight:600; cursor:pointer; }
+  .composer button:disabled { background:var(--line); color:var(--muted); cursor:not-allowed; }
+  .snap.contain { object-fit:contain; background:#0a0b08; }
+  .stage.drag { outline:2px dashed var(--accent); outline-offset:-8px; }
+  .chip { display:none; align-items:center; gap:10px; margin-top:10px; background:var(--panel); border:1px solid var(--accent); border-radius:8px; padding:6px 8px; font-size:12px; color:var(--muted); }
+  .chip.show { display:flex; }
+  .chip img { width:44px; height:34px; object-fit:cover; border-radius:4px; }
+  .chip span { flex:1; }
+  .chip button { background:none; border:none; color:var(--muted); cursor:pointer; font-size:16px; }
+  .status { margin-top:8px; font-family:var(--mono); font-size:11px; color:var(--muted); min-height:14px; }
+  .status.err { color:var(--danger); }
+  .addr { width:210px; background:var(--panel); border:1px solid var(--line); color:var(--muted); border-radius:6px; padding:5px 8px; font-family:var(--mono); font-size:11px; }
+
+  .chat { display:flex; flex-direction:column; min-height:0; }
+  .chat h2 { font-family:var(--mono); font-size:12px; font-weight:500; color:var(--muted); margin:0 0 12px; letter-spacing:.05em; }
+  .log { flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:14px; padding-right:4px; }
+  .empty { color:var(--muted); font-size:13px; opacity:.6; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px; }
+  .card .q { font-size:12px; color:var(--muted); margin-bottom:10px; }
+  .card .q::before { content:"you · "; color:var(--accent); font-family:var(--mono); }
+  .thumb { width:100%; aspect-ratio:16/10; object-fit:cover; border-radius:6px; display:block; background:#0a0b08; }
+  .thumb.hide { visibility:hidden; }
+  .body { opacity:0; transform:translateY(6px); transition:.4s; }
+  .body.in { opacity:1; transform:none; }
+  .sum { font-size:16px; line-height:1.4; margin:12px 0 6px; }
+  details { font-size:13px; color:var(--muted); }
+  details summary { cursor:pointer; font-size:12px; }
+  details pre { white-space:pre-wrap; font-family:var(--mono); font-size:12px; line-height:1.5; margin:8px 0 0; }
+  .foot { display:flex; justify-content:space-between; align-items:center; margin-top:8px; font-family:var(--mono); font-size:10px; color:var(--muted); }
+  .foot button { background:none; border:1px solid var(--line); color:var(--muted); border-radius:5px; padding:3px 8px; cursor:pointer; font-size:11px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <section class="cam">
+    <header>
+      <h1>cognivision <span>// live</span></h1>
+      <div class="pill" id="pill"><span class="dot"></span><span id="pillText">offline</span></div>
+      <input class="addr" id="addr" value="ws://localhost:8080/gateway" title="Gateway address">
+      <button class="icon-btn active" id="mute" title="Toggle voice">🔊 voice</button>
+    </header>
+
+    <div class="stage" id="stage">
+      <video id="video" autoplay playsinline muted></video>
+      <img class="snap" id="snap" alt="">
+      <img class="snap out" id="snapOut" alt="">
+      <div class="flash" id="flash"></div>
+      <div class="cam-msg" id="camMsg"></div>
+    </div>
+
+    <div class="composer">
+      <input id="prompt" placeholder="Ask about what's in front of you…" autocomplete="off">
+      <button class="icon-btn" id="upload" title="Upload a picture" style="font-size:16px">📎</button>
+      <input type="file" id="file" accept="image/*" hidden>
+      <button id="send">Scan</button>
+    </div>
+    <div class="chip" id="chip"><img id="chipImg" alt=""><span>Uploaded picture will be used for the next scan</span><button id="chipX" title="Remove">✕</button></div>
+    <div class="status" id="status"></div>
+  </section>
+
+  <aside class="chat">
+    <h2>HISTORY</h2>
+    <div class="log" id="log"><div class="empty" id="empty">Results will land here.</div></div>
+  </aside>
+</div>
+
+<script>
+// ---------- protocol (copy of proto/define.proto, only the messages the client uses) ----------
+// Keep this in sync with proto/define.proto. Field numbers must match exactly.
+const PROTO = `
+syntax = "proto3";
+package proto;
+
+message Result {
+  string    id        = 1;
+  string    reply     = 5;
+  Inference inference = 2;
+  string    time      = 3;
+  string    date      = 4;
+}
+message ClientRequest {
+  bytes  img    = 1;
+  string prompt = 2;
+}
+message Inference {
+  bytes      img        = 1;
+  Detections detections = 2;
+}
+message Detections {
+  repeated ObjectDetectionData object = 1;
+}
+message ObjectDetectionData {
+  string         label = 1;
+  repeated int32 bbox  = 2;
+}`;
+const pbRoot = protobuf.parse(PROTO).root;
+const ClientRequest = pbRoot.lookupType("proto.ClientRequest");
+const Result = pbRoot.lookupType("proto.Result");
+
+const $ = id => document.getElementById(id);
+const el = { video:$("video"), snap:$("snap"), snapOut:$("snapOut"), stage:$("stage"), flash:$("flash"),
+  camMsg:$("camMsg"), prompt:$("prompt"), send:$("send"), status:$("status"), log:$("log"),
+  addr:$("addr"), pill:$("pill"), pillText:$("pillText"), mute:$("mute") };
+
+let socket = null;
+let pending = null;     // the one in-flight request: {prompt, snap, timer}
+let cameraReady = false;
+const DEFAULT_PROMPT = "What is in front of me?";
+const REQUEST_TIMEOUT_MS = 90000;
+
+// ---------- speech: strict one-after-another queue, never cancels ----------
+const speechQueue = [];
+let speaking = false;
+let voiceOn = true;
+
+function say(text) {
+  if (!voiceOn || !text || !("speechSynthesis" in window)) return;
+  speechQueue.push(text);
+  pump();
+}
+function pump() {
+  if (speaking || !speechQueue.length) return;
+  speaking = true;
+  const u = new SpeechSynthesisUtterance(speechQueue.shift());
+  u.lang = "en-US";
+  const done = () => { speaking = false; pump(); };
+  u.onend = done;
+  u.onerror = done;
+  speechSynthesis.speak(u);
+}
+el.mute.addEventListener("click", () => {
+  voiceOn = !voiceOn;
+  el.mute.classList.toggle("active", voiceOn);
+  el.mute.textContent = voiceOn ? "🔊 voice" : "🔇 muted";
+  if (!voiceOn) { speechQueue.length = 0; speechSynthesis.cancel(); }
+});
+
+const ACKS = [
+  "Okay sir, I'm doing a quick scan.",
+  "Right away sir, scanning now.",
+  "Got it sir, give me a moment to look.",
+  "On it sir, taking a quick look."
+];
+
+// ---------- camera ----------
+async function startCamera() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "environment", width: { ideal: 1280 } }, audio: false });
+    el.video.srcObject = stream;
+    cameraReady = true;
+    el.camMsg.classList.remove("show");
+  } catch (e) {
+    cameraReady = false;
+    el.camMsg.textContent = "Camera unavailable (" + (e.name || "error") + "). Needs localhost/https and permission. Click to retry.";
+    el.camMsg.classList.add("show");
+  }
+}
+el.camMsg.addEventListener("click", startCamera);
+
+function capture() {
+  const vw = el.video.videoWidth, vh = el.video.videoHeight;
+  if (!vw) return null;
+  const scale = Math.min(1, 768 / vw);
+  const c = document.createElement("canvas");
+  c.width = Math.round(vw * scale);
+  c.height = Math.round(vh * scale);
+  c.getContext("2d").drawImage(el.video, 0, 0, c.width, c.height);
+  return c.toDataURL("image/jpeg", 0.8);
+}
+
+// data URL -> raw JPEG bytes (what the protobuf `bytes` field carries)
+function dataUrlToBytes(url) {
+  const bin = atob(url.split(",")[1]);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+// ---------- websocket (binary protobuf frames) ----------
+function setStatus(t, err) { el.status.textContent = t; el.status.className = "status" + (err ? " err" : ""); }
+function setOnline(on) { el.pill.classList.toggle("on", on); el.pillText.textContent = on ? "connected" : "offline"; }
+
+function connect() {
+  return new Promise((resolve, reject) => {
+    if (socket && socket.readyState === WebSocket.OPEN) return resolve();
+    if (socket && socket.readyState === WebSocket.CONNECTING) {
+      socket.addEventListener("open", () => resolve(), { once: true });
+      socket.addEventListener("error", () => reject(new Error("ws")), { once: true });
+      return;
+    }
+    const s = new WebSocket(el.addr.value);
+    s.binaryType = "arraybuffer";
+    socket = s;
+    s.addEventListener("open", () => { setOnline(true); resolve(); });
+    s.addEventListener("message", ev => {
+      if (!(ev.data instanceof ArrayBuffer)) return setStatus("non-binary message ignored", true);
+      let r;
+      try { r = Result.decode(new Uint8Array(ev.data)); }
+      catch { return setStatus("could not decode protobuf Result", true); }
+      onResult(r);
+    });
+    s.addEventListener("close", () => {
+      setOnline(false);
+      if (socket === s && pending) fail("Connection lost.");
+    });
+    s.addEventListener("error", () => { setOnline(false); reject(new Error("ws")); });
+  });
+}
+el.addr.addEventListener("change", () => { if (socket) socket.close(); connect().catch(() => {}); });
+
+// ---------- send ----------
+let animating = false;   // true while the output image is swapping in / about to fly
+async function send() {
+  if (pending || animating) return;
+  const usingUpload = !!uploaded;
+  if (!usingUpload && !cameraReady) return setStatus("Camera not ready.", true);
+  const snapUrl = usingUpload ? uploaded : capture();
+  if (!snapUrl) return setStatus("Camera has no frame yet.", true);
+  clearUpload();
+  el.snap.classList.toggle("contain", usingUpload);
+  el.snapOut.classList.toggle("contain", usingUpload);
+  const prompt = el.prompt.value.trim() || DEFAULT_PROMPT;
+
+  // freeze the moment: show the snapshot over the live feed
+  el.flash.classList.remove("go"); void el.flash.offsetWidth; el.flash.classList.add("go");
+  el.snap.src = snapUrl;
+  el.snap.classList.add("on");
+  el.stage.classList.add("busy");
+  el.send.disabled = true;
+  el.prompt.value = "";
+  pending = { prompt, snap: snapUrl, timer: setTimeout(() => fail("No result (timed out)."), REQUEST_TIMEOUT_MS) };
+
+  say(ACKS[Math.floor(Math.random() * ACKS.length)]);
+
+  try {
+    await connect();
+    const msg = ClientRequest.create({ prompt, img: dataUrlToBytes(snapUrl) });
+    socket.send(ClientRequest.encode(msg).finish());   // binary frame
+    setStatus("sent, waiting for result…");
+  } catch {
+    fail("Can't reach the gateway. Is it running?");
+  }
+}
+el.send.addEventListener("click", send);
+el.prompt.addEventListener("keydown", e => { if (e.key === "Enter") send(); });
+
+function endScan() {
+  el.snap.classList.remove("on");
+  el.stage.classList.remove("busy");
+  el.send.disabled = false;
+}
+
+function fail(msg) {
+  if (!pending) return;
+  clearTimeout(pending.timer);
+  pending = null;
+  endScan();
+  setStatus(msg, true);
+  say("Sorry sir, I couldn't get a result.");
+}
+
+// ---------- result (decoded protobuf Result) ----------
+async function onResult(r) {
+  const job = pending;
+  if (job) { clearTimeout(job.timer); pending = null; animating = true; }
+
+  const summary = r.reply || "(no summary)";
+
+  // inference.img is raw bytes; the inference worker may leave it empty for now
+  const imgBytes = r.inference && r.inference.img;
+  const outSrc = imgBytes && imgBytes.length
+    ? URL.createObjectURL(new Blob([imgBytes], { type: "image/jpeg" })) : "";
+
+  // detections -> readable lines: "person  [x1, y1, x2, y2]"
+  const objects = (r.inference && r.inference.detections && r.inference.detections.object) || [];
+  const detail = objects.map(o => o.label + "  [" + Array.from(o.bbox).join(", ") + "]").join("\n");
+
+  say(summary);   // queued behind any ack still being spoken; never cancels
+  setStatus("result received");
+
+  try {
+    // 1) smoothly swap the snapshot for the output image, right where it sits
+    if (job && outSrc) await showOutput(outSrc);
+
+    // 2) add the history card, then 3) fly the image into it
+    const imgSrc = outSrc || (job ? job.snap : "");
+    const card = buildCard(job ? job.prompt : "(unsolicited result)", imgSrc, summary, detail, r);
+    $("empty")?.remove();
+    el.log.appendChild(card);
+    el.log.scrollTop = el.log.scrollHeight;
+
+    const thumb = card.querySelector(".thumb");
+    const body = card.querySelector(".body");
+    if (job) flyToCard(imgSrc, thumb, body);
+    else { thumb.classList.remove("hide"); body.classList.add("in"); }
+  } finally {
+    animating = false;
+    endScan();
+  }
+}
+
+async function showOutput(src) {
+  el.snapOut.src = src;
+  try { await el.snapOut.decode(); } catch {}
+  el.snapOut.classList.add("show");                 // crossfade over the pulsing snapshot
+  await new Promise(res => setTimeout(res, 700));   // let the fade finish before flying
+}
+
+function buildCard(prompt, imgSrc, summary, detail, r) {
+  const card = document.createElement("article");
+  card.className = "card";
+  const q = document.createElement("div"); q.className = "q"; q.textContent = prompt;
+  const thumb = document.createElement("img"); thumb.className = "thumb hide"; thumb.src = imgSrc;
+  const body = document.createElement("div"); body.className = "body";
+  const sum = document.createElement("p"); sum.className = "sum"; sum.textContent = summary;
+  body.appendChild(sum);
+  if (detail) {
+    const d = document.createElement("details");
+    const s = document.createElement("summary"); s.textContent = "details";
+    const pre = document.createElement("pre"); pre.textContent = detail;
+    d.append(s, pre); body.appendChild(d);
+  }
+  const foot = document.createElement("div"); foot.className = "foot";
+  const meta = document.createElement("span");
+  meta.textContent = [r.date, r.time, r.id].filter(Boolean).join(" · ");
+  const replay = document.createElement("button"); replay.textContent = "🔊 replay";
+  replay.addEventListener("click", () => say(summary));
+  foot.append(meta, replay); body.appendChild(foot);
+  card.append(q, thumb, body);
+  return card;
+}
+
+function flyToCard(src, thumb, body) {
+  const from = el.snap.getBoundingClientRect();
+  const to = thumb.getBoundingClientRect();
+  const clone = document.createElement("img");
+  clone.src = src;
+  Object.assign(clone.style, {
+    position: "fixed", left: from.left + "px", top: from.top + "px",
+    width: from.width + "px", height: from.height + "px",
+    objectFit: getComputedStyle(el.snap).objectFit, background: "#0a0b08",
+    borderRadius: "12px", zIndex: 50, pointerEvents: "none",
+    boxShadow: "0 10px 40px rgba(0,0,0,.6)"
+  });
+  document.body.appendChild(clone);
+
+  // the clone now stands in for the stage image, so drop the stage layer instantly
+  el.snapOut.style.transition = "none";
+  el.snapOut.classList.remove("show");
+  void el.snapOut.offsetWidth;
+  el.snapOut.style.transition = "";
+
+  const finish = () => { clone.remove(); thumb.classList.remove("hide"); body.classList.add("in"); };
+  const anim = clone.animate([
+    { left: from.left + "px", top: from.top + "px", width: from.width + "px", height: from.height + "px", borderRadius: "12px" },
+    { left: to.left + "px", top: to.top + "px", width: to.width + "px", height: to.height + "px", borderRadius: "6px" }
+  ], { duration: 750, easing: "cubic-bezier(.65,0,.25,1)", fill: "forwards" });
+  anim.onfinish = finish;
+  anim.oncancel = finish;
+}
+
+// ---------- picture upload ----------
+let uploaded = null;   // resized JPEG data URL, used for the next scan instead of the camera
+const fileInput = $("file"), chip = $("chip"), chipImg = $("chipImg");
+
+function clearUpload() { uploaded = null; chip.classList.remove("show"); fileInput.value = ""; }
+
+function loadImageFile(f) {
+  if (!f || !f.type.startsWith("image/")) return setStatus("That's not an image file.", true);
+  const url = URL.createObjectURL(f);
+  const img = new Image();
+  img.onload = () => {
+    const scale = Math.min(1, 768 / img.naturalWidth);
+    const c = document.createElement("canvas");
+    c.width = Math.round(img.naturalWidth * scale);
+    c.height = Math.round(img.naturalHeight * scale);
+    c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+    uploaded = c.toDataURL("image/jpeg", 0.85);
+    chipImg.src = uploaded;
+    chip.classList.add("show");
+    setStatus("picture ready — ask a question and hit Scan");
+    URL.revokeObjectURL(url);
+    el.prompt.focus();
+  };
+  img.onerror = () => { setStatus("Couldn't read that image.", true); URL.revokeObjectURL(url); };
+  img.src = url;
+}
+$("upload").addEventListener("click", () => fileInput.click());
+fileInput.addEventListener("change", () => loadImageFile(fileInput.files[0]));
+$("chipX").addEventListener("click", clearUpload);
+el.stage.addEventListener("dragover", e => { e.preventDefault(); el.stage.classList.add("drag"); });
+el.stage.addEventListener("dragleave", () => el.stage.classList.remove("drag"));
+el.stage.addEventListener("drop", e => {
+  e.preventDefault(); el.stage.classList.remove("drag");
+  loadImageFile(e.dataTransfer.files[0]);
+});
+
+// ---------- boot ----------
+window.addEventListener("beforeunload", () => {
+  speechSynthesis.cancel();
+  if (socket) socket.close(1000, "page closed");
+});
+startCamera();
+connect().catch(() => setStatus("Gateway offline — will retry on send.", true));
+</script>
+</body>
+</html>
